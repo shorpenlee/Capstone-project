@@ -1,0 +1,293 @@
+---
+title: "Week2 milestone report"
+author: "Shaopeng Li"
+date: "2020/8/11"
+output: html_document
+---
+
+```{r setup, include=FALSE,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE,warning=FALSE)
+```
+
+## Introduction
+
+This is for the Coursera Data Science Capstone project in Week 2, Milestone Report.
+
+The objective of this report is to develop an exploratory analysis of the data set that later will be used when building the prediction model. This report describes the major features of the training data and then summarized the future analytic plan.
+
+The model will be trained using a unified document corpus complied from following three sources of text data: blogs, news and twitter. The data is collected from publicly available sources by a web crawler and is provided by Coursera. You can download the training data from <https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip>.
+
+In this report, I will perform following process: 1.Data load and cleaning 2.Take random samples to speed up the process 3.Conduct some basic statistic analysis 4.Create some plots and wordclouds for visualization 5.Summarize the findings.
+
+## Data Load and summary
+
+First, we need to download and load the data in R. Before we start to clean the data, we will first look at the basic summary of three files, which includes file sizes, number of lines, number of characters, and number of words of each file. Also, we use the **stringi** pacakge to split the words per line to get the min, mean and max number of words per line. 
+
+```{r, message=FALSE}
+##Dataload
+setwd("~/Capstone-project")
+blogs<-file("data/final/en_US/en_US.blogs.txt","r")
+blogs_lines<-readLines(blogs,encoding = "UTF-8", skipNul = TRUE)
+close(blogs)
+news<-file("data/final/en_US/en_US.news.txt","r")
+news_lines<-readLines(news,encoding = "UTF-8", skipNul = TRUE)
+close(news)
+twitter<-file("data/final/en_US/en_US.twitter.txt","r")
+twitter_lines<-readLines(twitter,encoding = "UTF-8", skipNul = TRUE)
+close(twitter)
+library(stringi)
+library(knitr)
+library(dplyr)
+# file size
+fileSizeMB <- round(file.info(c("data/final/en_US/en_US.blogs.txt",
+                                "data/final/en_US/en_US.news.txt",
+                                "data/final/en_US/en_US.twitter.txt"))$size / 1024 ^ 2)
+# num lines per file
+numLines <- sapply(list(blogs_lines, news_lines, twitter_lines), length)
+# num characters per file
+numChars <- sapply(list(nchar(blogs_lines), nchar(news_lines), nchar(twitter_lines)), sum)
+# num words per file
+numWords <- sapply(list(blogs_lines, news_lines, twitter_lines), stri_stats_latex)[4,]
+# words per line
+wpl <- lapply(list(blogs_lines, news_lines, twitter_lines),stri_count_words)
+# words per line summary
+wplSummary = sapply(list(blogs_lines, news_lines, twitter_lines),
+             function(x) summary(stri_count_words(x))[c('Min.', 'Mean', 'Max.')])
+rownames(wplSummary) = c('WPL.Min', 'WPL.Mean', 'WPL.Max')
+summary <- data.frame(
+    File = c("en_US.blogs.txt", "en_US.news.txt", "en_US.twitter.txt"),
+    FileSize = paste(fileSizeMB, " MB"),
+    Lines = numLines,
+    Characters = numChars,
+    Words = numWords,
+    t(rbind(round(wplSummary)))
+)
+summary
+```
+
+From the above chart, we can see each text corpora has a relatively low number of words in a line. In average, bolgs are longer than the others. Twitter has the lowest number of words per line, which is reasonable, considering twitter has the characters limitation.
+
+We can also visualize the above conclusion. In the below plot, it is proved that there ia a relatively low number of words per line.
+```{r}
+library(ggplot2)
+library(ggpubr)
+plot1 <- qplot(wpl[[1]],
+               geom = "histogram",
+               main = "US Blogs",
+               xlab = "Words per Line",
+               ylab = "Frequency",
+               binwidth = 5)
+
+plot2 <- qplot(wpl[[2]],
+               geom = "histogram",
+               main = "US News",
+               xlab = "Words per Line",
+               ylab = "Frequency",
+               binwidth = 5)
+
+plot3 <- qplot(wpl[[3]],
+               geom = "histogram",
+               main = "US Twitter",
+               xlab = "Words per Line",
+               ylab = "Frequency",
+               binwidth = 1)
+ggarrange(plot1,plot2,plot3,ncol=1,nrow=3)
+# free up some memory
+rm(plot1, plot2, plot3)
+```
+
+
+## Data preparation
+
+In this session, the three data sets will be sampled at 1% to improve the performance. All non-English characters will also be removed. In the final sample data, there are 33365 lines and 697575 words.
+
+```{r}
+sampleSize=0.01
+# set seed for reproducability
+set.seed(660067)
+
+# sample all three data sets
+sampleBlogs <- sample(blogs_lines, length(blogs_lines) * sampleSize, replace = FALSE)
+sampleNews <- sample(news_lines, length(news_lines) * sampleSize, replace = FALSE)
+sampleTwitter <- sample(twitter_lines, length(twitter_lines) * sampleSize, replace = FALSE)
+
+# remove all non-English characters from the sampled data
+sampleBlogs <- iconv(sampleBlogs, "latin1", "ASCII", sub = "")
+sampleNews <- iconv(sampleNews, "latin1", "ASCII", sub = "")
+sampleTwitter <- iconv(sampleTwitter, "latin1", "ASCII", sub = "")
+
+# combine all three data sets into a single data set and write to disk
+sampleData <- c(sampleBlogs, sampleNews, sampleTwitter)
+sampleDataFileName <- "data/final/en_US/en_US.sample.txt"
+con <- file(sampleDataFileName, open = "w")
+writeLines(sampleData, con)
+close(con)
+
+# get number of lines and words from the sample data set
+sampleDataLines <- length(sampleData)
+sampleDataWords <- sum(stri_count_words(sampleData))
+
+# remove variables no longer needed to free up memory
+rm(blogs_lines, news_lines, twitter_lines, sampleBlogs, sampleNews, sampleTwitter)
+
+```
+Next, we will create a corpus based on the sampled data set. Basing on the **tm** package, we will perform the following transformation:
+
+1. Remove URL, Twitter handles and email patterns by converting them to 2. spaces using a custom content transformer
+3. Convert all words to lowercase
+4. Remove common English stop words
+5. Remove punctuation marks
+6. Remove numbers
+7. Trim whitespace
+8. Remove profanity
+9. Convert to plain text documents
+
+```{r}
+library(tm)
+##create a corpus and dont use corpus function because it will delete some signs
+corpus <- VCorpus(VectorSource(sampleData))
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, tolower)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, PlainTextDocument)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+
+saveRDS(corpus, file = "data/final/en_US/en_US.corpus.rds")
+
+# convert corpus to a dataframe and write lines/words to disk (text)
+corpusText <- data.frame(text = unlist(sapply(corpus, "content")), stringsAsFactors = FALSE)
+con <- file("data/final/en_US/en_US.corpus.txt", open = "w")
+writeLines(corpusText$text, con)
+close(con)
+rm(sampleData)
+```
+
+## Exploratory Data Analysis
+
+We are mainly interested in seeing the most frequently used words, tokenizing and n-gram generation.
+
+### Word Frequencies
+
+A bar chart and word cloud will be showed to illustrate unique word frequencies.
+
+```{r}
+library(wordcloud)
+library(RColorBrewer)
+
+tdm <- TermDocumentMatrix(corpus)
+memory.limit(10000000)
+##options(scipen=200)
+##memory.size(NA)
+freq <- sort(rowSums(as.matrix(tdm)), decreasing = TRUE)
+wordFreq <- data.frame(word = names(freq), freq = freq)
+
+# plot the top 10 most frequent words
+g <- ggplot (wordFreq[1:10,], aes(x = reorder(wordFreq[1:10,]$word, -wordFreq[1:10,]$freq),y = wordFreq[1:10,]$freq ))
+g <- g + geom_bar( stat = "Identity" , fill = I("grey50"))
+g <- g + geom_text(aes(label = wordFreq[1:10,]$freq), vjust = -0.20, size = 3)
+g <- g + xlab("")
+g <- g + ylab("Word Frequencies")
+g <- g + theme(plot.title = element_text(size = 14, hjust = 0.5, vjust = 0.5),
+               axis.text.x = element_text(hjust = 0.5, vjust = 0.5, angle = 45),
+               axis.text.y = element_text(hjust = 0.5, vjust = 0.5))
+g <- g + ggtitle("10 Most Frequent Words")
+print(g)
+
+# construct word cloud
+suppressWarnings (
+    wordcloud(words = wordFreq$word,
+              freq = wordFreq$freq,
+              min.freq = 1,
+              max.words = 100,
+              random.order = FALSE,
+              rot.per = 0.35, 
+              colors=brewer.pal(8, "Dark2"))
+)
+
+# remove variables no longer needed to free up memory
+rm(tdm, freq, wordFreq, g)
+```
+
+## Tokenizing and N-Gram Generation
+
+In this section, I will use the **RWeka** package to construct functions that tokenize the sample data and construct matrics of uniqrams, bigrams, and trigrams.
+
+### Unigrams
+```{r}
+library(RWeka)
+##Sys.setenv(JAVA_HOME='C:/Program Files/Java/jre1.8.0_261')
+unigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+bigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+trigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+
+##create term document matrix for the corpus
+unigramMatrix <- TermDocumentMatrix(corpus, control = list(tokenize = unigramTokenizer))
+
+# eliminate sparse terms for each n-gram and get frequencies of most common n-grams
+unigramMatrixFreq <-sort(rowSums(as.matrix(removeSparseTerms(unigramMatrix, 0.99))), decreasing = TRUE)
+unigramMatrixFreq <- data.frame(word = names(unigramMatrixFreq), freq = unigramMatrixFreq)
+
+# generate plot
+g <- ggplot(unigramMatrixFreq[1:20,], aes(x = reorder(word, -freq), y = freq))
+g <- g + geom_bar(stat = "identity", fill = I("grey50"))
+g <- g + geom_text(aes(label = freq ), vjust = -0.20, size = 3)
+g <- g + xlab("")
+g <- g + ylab("Frequency")
+g <- g + theme(plot.title = element_text(size = 14, hjust = 0.5, vjust = 0.5),
+               axis.text.x = element_text(hjust = 1.0, angle = 45),
+               axis.text.y = element_text(hjust = 0.5, vjust = 0.5))
+g <- g + ggtitle("20 Most Common Unigrams")
+print(g)
+```
+
+
+### Bigrams
+```{r}
+# create term document matrix for the corpus
+bigramMatrix <- TermDocumentMatrix(corpus, control = list(tokenize = bigramTokenizer))
+
+# eliminate sparse terms for each n-gram and get frequencies of most common n-grams
+bigramMatrixFreq <- sort(rowSums(as.matrix(removeSparseTerms(bigramMatrix, 0.999))), decreasing = TRUE)
+bigramMatrixFreq <- data.frame(word = names(bigramMatrixFreq), freq = bigramMatrixFreq)
+
+# generate plot
+g <- ggplot(bigramMatrixFreq[1:20,], aes(x = reorder(word, -freq), y = freq))
+g <- g + geom_bar(stat = "identity", fill = I("grey50"))
+g <- g + geom_text(aes(label = freq ), vjust = -0.20, size = 3)
+g <- g + xlab("")
+g <- g + ylab("Frequency")
+g <- g + theme(plot.title = element_text(size = 14, hjust = 0.5, vjust = 0.5),
+               axis.text.x = element_text(hjust = 1.0, angle = 45),
+               axis.text.y = element_text(hjust = 0.5, vjust = 0.5))
+g <- g + ggtitle("20 Most Common Bigrams")
+print(g)
+```
+### Trigrams
+```{r}
+# create term document matrix for the corpus
+trigramMatrix <- TermDocumentMatrix(corpus, control = list(tokenize = trigramTokenizer))
+
+# eliminate sparse terms for each n-gram and get frequencies of most common n-grams
+trigramMatrixFreq <- sort(rowSums(as.matrix(removeSparseTerms(trigramMatrix, 0.9999))), decreasing = TRUE)
+trigramMatrixFreq <- data.frame(word = names(trigramMatrixFreq), freq = trigramMatrixFreq)
+
+# generate plot
+g <- ggplot(trigramMatrixFreq[1:20,], aes(x = reorder(word, -freq), y = freq))
+g <- g + geom_bar(stat = "identity", fill = I("grey50"))
+g <- g + geom_text(aes(label = freq ), vjust = -0.20, size = 3)
+g <- g + xlab("")
+g <- g + ylab("Frequency")
+g <- g + theme(plot.title = element_text(size = 14, hjust = 0.5, vjust = 0.5),
+               axis.text.x = element_text(hjust = 1.0, angle = 45),
+               axis.text.y = element_text(hjust = 0.5, vjust = 0.5))
+g <- g + ggtitle("20 Most Common Trigrams")
+print(g)
+```
+
+## Conclusion
+
+From the above three graphs, the longer the N-gram, the less frequent they become. The final deliverable of the capstone project is to build a predictive algorithm that will be deployed as a Shiny app. The Shiny app should take as input a phrase (maybe multiple words) in a text box input and output a prediction of the next word.
+
+As for the future plan, the predictive algorithm will be developed using an n-gram model with a word frequency lookup similar to that performed in the exploratory data analysis section of this report, which is as n increased for each n-gram, the frequency decreased for each of its terms. The strategy may be to construct the model to first look for the unigram that would match entirely the entered text. Once a full term is entered followed by a space, find the most common bigram model and so on.

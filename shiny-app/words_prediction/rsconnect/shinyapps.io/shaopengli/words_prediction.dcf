@@ -1,0 +1,12 @@
+name: words_prediction
+title: words_prediction
+username:
+account: shaopengli
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2672307
+bundleId: 3518344
+url: https://shaopengli.shinyapps.io/words_prediction/
+when: 1597460570.55131
+asMultiple: FALSE
+asStatic: FALSE
