@@ -32,7 +32,7 @@ predictive model.
 
 * Milestone Report available on RPubs: <a target="_blank"  href="https://rpubs.com/shaopengli/647940">https://rpubs.com/shaopengli/647940</a>
   
-  ### Final Project Submission
+### Final Project Submission
   
 The goal for this final project assignment is to implement a learning model for
 text prediction. Using the text prediction algorithm, create a product in Shiny
